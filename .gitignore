@@ -1,0 +1,15 @@
+# Data cache (regenerated on run), anywhere it lands
+data/
+**/data/
+# Reports: keep the showcase PNG, ignore regenerated CSVs
+reports/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+.DS_Store
