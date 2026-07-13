@@ -57,6 +57,41 @@ def plot_regimes(
     return ax
 
 
+def plot_online_vs_hindsight(
+    prices: pd.DataFrame,
+    features: pd.DataFrame,
+    online: pd.Series,
+    hindsight: np.ndarray,
+    savepath: str | None = None,
+):
+    """Two stacked panels: real-time (online) vs. hindsight regime calls.
+
+    The visual point is the lag — where the online panel's colored blocks start
+    *after* the hindsight panel's, that's the detection delay a live system pays.
+    """
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 1, figsize=(13, 6.4), sharex=True)
+
+    # Online panel only shades days that actually have a call (skip warm-up).
+    on = online.to_numpy()
+    warm = on >= 0
+    plot_regimes(
+        prices,
+        features.loc[online.index[warm]],
+        on[warm],
+        title="Online (walk-forward, out-of-sample)",
+        ax=axes[0],
+    )
+    plot_regimes(
+        prices, features, hindsight, title="Hindsight (full-sample)", ax=axes[1]
+    )
+    fig.tight_layout()
+    if savepath:
+        fig.savefig(savepath, dpi=120, bbox_inches="tight")
+    return fig
+
+
 def plot_model_comparison(
     prices: pd.DataFrame,
     features: pd.DataFrame,

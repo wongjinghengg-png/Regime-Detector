@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import data, evaluate, features
+from . import data, evaluate, features, walkforward
 from .models import baseline, clustering, hmm
 
 
@@ -23,6 +23,7 @@ def run(
     n_regimes: int = 3,
     outdir: str = "reports",
     make_plots: bool = True,
+    walk_forward: bool = False,
 ) -> dict:
     prices = data.load_prices(ticker, start, end)
     feats = features.build_features(prices)
@@ -49,6 +50,23 @@ def run(
     print(summary.round(3).to_string())
     summary.to_csv(Path(outdir) / "hmm_regime_summary.csv")
 
+    result = {"prices": prices, "features": feats, "labels": labels}
+
+    if walk_forward:
+        print("\n=== Walk-forward (out-of-sample) HMM ===")
+        online = walkforward.walk_forward_hmm(feats, n_regimes=n_regimes)
+        hindsight = labels["HMM"]
+        agree = walkforward.agreement_rate(online, hindsight)
+        crisis = int(max(labels["HMM"]))
+        lag = walkforward.detection_lag(online, hindsight, crisis)
+        print(f"Online vs hindsight agreement: {agree:.1%}")
+        print(
+            f"Crisis regime (id {crisis}): detected "
+            f"{lag['n_detected']}/{lag['n_events']} events, "
+            f"mean lag {lag['mean_lag_days']:.1f} days"
+        )
+        result["online"] = online
+
     if make_plots:
         try:
             from . import plots
@@ -56,10 +74,17 @@ def run(
             fig_path = Path(outdir) / "regime_comparison.png"
             plots.plot_model_comparison(prices, feats, labels, savepath=str(fig_path))
             print(f"\nSaved comparison figure -> {fig_path}")
+
+            if walk_forward:
+                wf_path = Path(outdir) / "walk_forward.png"
+                plots.plot_online_vs_hindsight(
+                    prices, feats, result["online"], labels["HMM"], savepath=str(wf_path)
+                )
+                print(f"Saved walk-forward figure -> {wf_path}")
         except Exception as exc:  # plotting is optional / headless-safe
             print(f"\n[plot skipped: {exc}]")
 
-    return {"prices": prices, "features": feats, "labels": labels}
+    return result
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -70,6 +95,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--regimes", type=int, default=3)
     p.add_argument("--outdir", default="reports")
     p.add_argument("--no-plots", action="store_true")
+    p.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help="also run out-of-sample walk-forward HMM (slower, ~40s)",
+    )
     args = p.parse_args(argv)
     run(
         ticker=args.ticker,
@@ -78,6 +108,7 @@ def main(argv: list[str] | None = None) -> None:
         n_regimes=args.regimes,
         outdir=args.outdir,
         make_plots=not args.no_plots,
+        walk_forward=args.walk_forward,
     )
 
 

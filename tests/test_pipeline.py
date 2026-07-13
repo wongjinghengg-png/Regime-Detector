@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from regime_detector import data, evaluate, features  # noqa: E402
+from regime_detector import data, evaluate, features, walkforward  # noqa: E402
 from regime_detector.models import baseline, clustering, hmm  # noqa: E402
 
 
@@ -71,3 +71,46 @@ def test_crisis_regime_has_negative_returns(prepared):
     crisis = summary.index.max()
     calm = summary.index.min()
     assert summary.loc[crisis, "worst_drawdown"] < summary.loc[calm, "worst_drawdown"]
+
+
+@pytest.fixture(scope="module")
+def walk_forward_result(prepared):
+    _, feats, _ = prepared
+    # Small/fast settings keep the test quick while exercising the real path.
+    online = walkforward.walk_forward_hmm(
+        feats, min_train=252, refit_every=126, n_iter=50
+    )
+    return feats, online
+
+
+def test_walk_forward_has_no_lookahead_warmup(walk_forward_result):
+    """No online call should exist before min_train days have elapsed."""
+    feats, online = walk_forward_result
+    assert len(online) == len(feats)
+    assert (online.iloc[:252] == -1).all()      # warm-up: no call yet
+    assert (online.iloc[252:] >= 0).all()       # every later day has a call
+
+
+def test_walk_forward_labels_are_valid(walk_forward_result):
+    _, online = walk_forward_result
+    called = online[online >= 0]
+    assert set(called.unique()).issubset({0, 1, 2})
+
+
+def test_online_is_less_accurate_than_hindsight_is_to_itself(walk_forward_result):
+    """Out-of-sample agreement is imperfect — that's the whole point (lag/noise)."""
+    feats, online = walk_forward_result
+    X = features.model_matrix(feats)
+    hindsight = hmm.fit_predict(feats, X, n_regimes=3)
+    agree = walkforward.agreement_rate(online, hindsight)
+    assert 0.3 < agree < 1.0  # correlated with hindsight, but not identical
+
+
+def test_detection_lag_is_nonnegative(walk_forward_result):
+    feats, online = walk_forward_result
+    X = features.model_matrix(feats)
+    hindsight = hmm.fit_predict(feats, X, n_regimes=3)
+    lag = walkforward.detection_lag(online, hindsight, target_regime=2)
+    assert lag["n_events"] >= lag["n_detected"] >= 0
+    if lag["n_detected"] > 0:
+        assert lag["mean_lag_days"] >= 0

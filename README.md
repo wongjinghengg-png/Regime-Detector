@@ -77,7 +77,39 @@ CLI options: `--ticker`, `--start`, `--end`, `--regimes`, `--outdir`, `--no-plot
 > produced from the synthetic fallback; point it at a network-connected machine
 > to analyze real SPY.
 
+Add `--walk-forward` to also run the out-of-sample evaluation below (~40s):
+
+```bash
+python -m regime_detector --ticker SPY --walk-forward
+```
+
 The narrated walkthrough lives in [`notebooks/analysis.ipynb`](notebooks/analysis.ipynb).
+
+---
+
+## Walk-forward: does it work out-of-sample?
+
+The four models above are fit on the *entire* history and read regimes off with
+hindsight — useful for describing regimes, but not how a live system works. The
+walk-forward evaluation fixes that for the HMM: it refits on an **expanding
+window** and, at each day, assigns a regime using **only data available up to
+that day** (filtered / online inference — no future leakage).
+
+![Online vs hindsight regime calls](reports/walk_forward.png)
+
+*Top: real-time regime calls. Bottom: hindsight. The white gap on the left is
+the warm-up period before enough history exists to make a call. The online panel
+is noisier because, in real time, you can't yet know how a stretch resolves.*
+
+On the representative run the online detector **agrees with hindsight ~65%** of
+days and catches the crisis regime with a **mean lag of ~1 day** — it reacts
+fast, but the disagreement quantifies exactly how much of the clean hindsight
+picture is unavailable in real time. That honesty is the point: it turns "here
+are the regimes" into "here is what you'd actually have known, and when."
+
+Implementation: [`walkforward.py`](src/regime_detector/walkforward.py). Standardization
+and volatility-based relabeling are both computed **within each window**, so no
+statistic ever leaks from the future.
 
 ---
 
@@ -93,6 +125,8 @@ The narrated walkthrough lives in [`notebooks/analysis.ipynb`](notebooks/analysi
    ground truth to score against; instead we measure per-regime economics
    (return / vol / Sharpe / drawdown) and persistence (switch count, run length).
 4. **Plots** (`plots.py`) — the price line shaded by regime, one panel per model.
+5. **Walk-forward** (`walkforward.py`) — expanding-window, out-of-sample HMM with
+   detection-lag metrics (see the section above).
 
 ```
 src/regime_detector/
@@ -103,6 +137,7 @@ src/regime_detector/
 │   ├── clustering.py# KMeans / GMM
 │   ├── hmm.py       # Gaussian HMM  ← centerpiece
 │   └── base.py      # volatility-ordered relabeling
+├── walkforward.py   # out-of-sample expanding-window HMM + lag metrics
 ├── evaluate.py      # regime-conditional stats
 ├── plots.py         # shaded regime charts
 └── cli.py           # end-to-end pipeline
@@ -114,21 +149,21 @@ src/regime_detector/
 
 Read this section — it's the most important one.
 
-- **Lookahead in preprocessing.** Features are standardized using full-sample
-  statistics, and the models are fit on the entire history at once. A live system
-  would fit on a rolling/expanding window and standardize causally.
-- **Regimes are labeled after the fact.** The HMM's `predict` uses the whole
-  sequence (smoothing). Real-time detection needs *filtered* (online) inference,
-  which reacts with a lag and is noisier.
+- **Lookahead in the default views.** The four-model comparison and the
+  per-regime stats are computed on the full sample. The **`--walk-forward` path
+  removes this** (expanding-window refit, in-window standardization, online
+  inference), but it is opt-in and covers only the HMM — the headline charts are
+  still hindsight.
 - **No transaction costs, slippage, or execution model.** There is no backtest of
   a regime-conditioned strategy here, and no P&L claim is made.
 - **Non-stationarity.** The number of regimes is fixed by hand (`--regimes`), and
   market dynamics drift over decades; a fixed 3-state model is a simplification.
+  Selecting the regime count via BIC/AIC would be a natural improvement.
 - **Single asset, single frequency.** Daily equity-index data only.
 
 Any of these would need to be addressed before the output could inform a real
-trade. Turning the lookahead-free version into a walk-forward evaluation is the
-natural next step.
+trade. A regime-conditioned strategy backtest — built strictly on the online
+walk-forward calls — is the natural next step.
 
 ---
 
