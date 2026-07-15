@@ -3,11 +3,18 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from regime_detector import data, evaluate, features, walkforward  # noqa: E402
+from regime_detector import (  # noqa: E402
+    data,
+    evaluate,
+    features,
+    strategy,
+    walkforward,
+)
 from regime_detector.models import baseline, clustering, hmm  # noqa: E402
 
 
@@ -114,3 +121,45 @@ def test_detection_lag_is_nonnegative(walk_forward_result):
     assert lag["n_events"] >= lag["n_detected"] >= 0
     if lag["n_detected"] > 0:
         assert lag["mean_lag_days"] >= 0
+
+
+def test_backtest_uses_lagged_signal_no_lookahead(walk_forward_result):
+    """Position on day t must come from the regime known on day t-1."""
+    feats, online = walk_forward_result
+    bt = strategy.backtest(feats, online, cost_bps=0.0)
+    valid = online[online >= 0]
+    expected_target = valid.map(strategy.DEFAULT_WEIGHTS).astype(float)
+    # Held weight is the target shifted forward one day (first day starts flat).
+    assert bt["weight"].iloc[0] == 0.0
+    pd.testing.assert_series_equal(
+        bt["weight"].iloc[1:],
+        expected_target.shift(1).iloc[1:],
+        check_names=False,
+    )
+
+
+def test_backtest_reduces_drawdown(walk_forward_result):
+    """De-risking in crisis should cut max drawdown vs. buy-and-hold."""
+    feats, online = walk_forward_result
+    bt = strategy.backtest(feats, online)
+    stats = strategy.compare(bt)
+    # Max drawdown is negative; strategy's should be shallower (closer to 0).
+    assert stats.loc["Regime strategy", "max_drawdown"] >= stats.loc[
+        "Buy & hold", "max_drawdown"
+    ]
+
+
+def test_transaction_costs_reduce_return(walk_forward_result):
+    feats, online = walk_forward_result
+    free = strategy.backtest(feats, online, cost_bps=0.0)
+    costly = strategy.backtest(feats, online, cost_bps=10.0)
+    assert (
+        costly["strategy_equity"].iloc[-1] < free["strategy_equity"].iloc[-1]
+    )
+
+
+def test_zero_exposure_regime_earns_nothing(walk_forward_result):
+    """With all weights zero the strategy return is exactly zero (minus costs)."""
+    feats, online = walk_forward_result
+    bt = strategy.backtest(feats, online, weights={0: 0.0, 1: 0.0, 2: 0.0}, cost_bps=0.0)
+    assert np.allclose(bt["strategy_return"], 0.0)

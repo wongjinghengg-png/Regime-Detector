@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import data, evaluate, features, walkforward
+from . import data, evaluate, features, strategy, walkforward
 from .models import baseline, clustering, hmm
 
 
@@ -24,6 +24,7 @@ def run(
     outdir: str = "reports",
     make_plots: bool = True,
     walk_forward: bool = False,
+    backtest: bool = False,
 ) -> dict:
     prices = data.load_prices(ticker, start, end)
     feats = features.build_features(prices)
@@ -52,7 +53,7 @@ def run(
 
     result = {"prices": prices, "features": feats, "labels": labels}
 
-    if walk_forward:
+    if walk_forward or backtest:
         print("\n=== Walk-forward (out-of-sample) HMM ===")
         online = walkforward.walk_forward_hmm(feats, n_regimes=n_regimes)
         hindsight = labels["HMM"]
@@ -67,6 +68,14 @@ def run(
         )
         result["online"] = online
 
+    if backtest:
+        print("\n=== Regime-conditioned backtest (out-of-sample signal) ===")
+        bt = strategy.backtest(feats, result["online"])
+        comparison = strategy.compare(bt)
+        print(comparison.round(3).to_string())
+        comparison.to_csv(Path(outdir).joinpath("backtest_stats.csv"))
+        result["backtest"] = bt
+
     if make_plots:
         try:
             from . import plots
@@ -75,12 +84,17 @@ def run(
             plots.plot_model_comparison(prices, feats, labels, savepath=str(fig_path))
             print(f"\nSaved comparison figure -> {fig_path}")
 
-            if walk_forward:
+            if walk_forward or backtest:
                 wf_path = Path(outdir) / "walk_forward.png"
                 plots.plot_online_vs_hindsight(
                     prices, feats, result["online"], labels["HMM"], savepath=str(wf_path)
                 )
                 print(f"Saved walk-forward figure -> {wf_path}")
+
+            if backtest:
+                bt_path = Path(outdir) / "backtest.png"
+                plots.plot_backtest(result["backtest"], savepath=str(bt_path))
+                print(f"Saved backtest figure -> {bt_path}")
         except Exception as exc:  # plotting is optional / headless-safe
             print(f"\n[plot skipped: {exc}]")
 
@@ -100,6 +114,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="also run out-of-sample walk-forward HMM (slower, ~40s)",
     )
+    p.add_argument(
+        "--backtest",
+        action="store_true",
+        help="run the regime-conditioned strategy backtest (implies --walk-forward)",
+    )
     args = p.parse_args(argv)
     run(
         ticker=args.ticker,
@@ -109,6 +128,7 @@ def main(argv: list[str] | None = None) -> None:
         outdir=args.outdir,
         make_plots=not args.no_plots,
         walk_forward=args.walk_forward,
+        backtest=args.backtest,
     )
 
 

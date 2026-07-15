@@ -92,6 +92,37 @@ def plot_online_vs_hindsight(
     return fig
 
 
+def plot_backtest(bt, title: str = "Regime strategy vs. buy & hold", savepath=None):
+    """Equity curves (top) and strategy exposure over time (bottom).
+
+    Uses only the out-of-sample window. The exposure panel makes the mechanism
+    obvious: the strategy cuts risk when the online detector flags stress.
+    """
+    import matplotlib.pyplot as plt
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(13, 6.4), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+    )
+
+    ax1.plot(bt.index, bt["buyhold_equity"], color="#888888", lw=1.3, label="Buy & hold")
+    ax1.plot(bt.index, bt["strategy_equity"], color="#2c7fb8", lw=1.5, label="Regime strategy")
+    ax1.set_yscale("log")
+    ax1.set_ylabel("Growth of $1 (log)")
+    ax1.set_title(title)
+    ax1.legend(loc="upper left", framealpha=0.9)
+    ax1.margins(x=0)
+
+    ax2.fill_between(bt.index, 0, bt["weight"], color="#2c7fb8", alpha=0.35, step="pre")
+    ax2.set_ylabel("Exposure")
+    ax2.set_ylim(-0.05, 1.05)
+    ax2.margins(x=0)
+
+    fig.tight_layout()
+    if savepath:
+        fig.savefig(savepath, dpi=120, bbox_inches="tight")
+    return fig
+
+
 def plot_model_comparison(
     prices: pd.DataFrame,
     features: pd.DataFrame,

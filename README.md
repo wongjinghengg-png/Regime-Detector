@@ -77,10 +77,12 @@ CLI options: `--ticker`, `--start`, `--end`, `--regimes`, `--outdir`, `--no-plot
 > produced from the synthetic fallback; point it at a network-connected machine
 > to analyze real SPY.
 
-Add `--walk-forward` to also run the out-of-sample evaluation below (~40s):
+Add `--walk-forward` for the out-of-sample evaluation, or `--backtest` for that
+plus the regime-conditioned strategy below (~40s):
 
 ```bash
 python -m regime_detector --ticker SPY --walk-forward
+python -m regime_detector --ticker SPY --backtest
 ```
 
 The narrated walkthrough lives in [`notebooks/analysis.ipynb`](notebooks/analysis.ipynb).
@@ -113,6 +115,40 @@ statistic ever leaks from the future.
 
 ---
 
+## Does the signal add value? A backtest
+
+The payoff question: if you tilt exposure by the **online** regime call — full
+in calm, half in choppy, out in crisis — do you do better than just holding SPY?
+Two rules keep it lookahead-free: the signal is the out-of-sample walk-forward
+regime, and the regime known at today's close sets *tomorrow's* position. A
+transaction cost is charged on every exposure change.
+
+![Regime strategy vs. buy & hold](reports/backtest.png)
+
+*Top (log scale): growth of $1. Bottom: strategy exposure — it steps down to
+cash when the online detector flags stress. The strategy sidesteps the deep
+drawdowns instead of riding them down.*
+
+| | Regime strategy | Buy & hold |
+|---|---|---|
+| CAGR | 5.0% | 6.1% |
+| Volatility | **9.2%** | 15.8% |
+| Sharpe | **0.58** | 0.45 |
+| Max drawdown | **−29%** | −44% |
+| Calmar | **0.17** | 0.14 |
+
+**The honest read:** the strategy gives up some total return (it sits in cash
+during crises, missing sharp rebounds) but delivers **higher risk-adjusted
+returns** — lower volatility, a better Sharpe, and a much shallower worst
+drawdown. That is what a working regime signal should buy you: *risk management*,
+not a free lunch. The exposure weights are fixed and un-optimized on purpose —
+tuning them on this same data would be overfitting.
+
+Implementation: [`strategy.py`](src/regime_detector/strategy.py). Reproduce with
+`python -m regime_detector --backtest`.
+
+---
+
 ## How it works
 
 1. **Features** (`features.py`) — from the close price: log returns, rolling
@@ -127,6 +163,8 @@ statistic ever leaks from the future.
 4. **Plots** (`plots.py`) — the price line shaded by regime, one panel per model.
 5. **Walk-forward** (`walkforward.py`) — expanding-window, out-of-sample HMM with
    detection-lag metrics (see the section above).
+6. **Backtest** (`strategy.py`) — regime-conditioned exposure vs. buy-and-hold,
+   built only on the online signal with a next-day execution lag and costs.
 
 ```
 src/regime_detector/
@@ -138,6 +176,7 @@ src/regime_detector/
 │   ├── hmm.py       # Gaussian HMM  ← centerpiece
 │   └── base.py      # volatility-ordered relabeling
 ├── walkforward.py   # out-of-sample expanding-window HMM + lag metrics
+├── strategy.py      # regime-conditioned backtest (lookahead-free)
 ├── evaluate.py      # regime-conditional stats
 ├── plots.py         # shaded regime charts
 └── cli.py           # end-to-end pipeline
@@ -154,16 +193,19 @@ Read this section — it's the most important one.
   removes this** (expanding-window refit, in-window standardization, online
   inference), but it is opt-in and covers only the HMM — the headline charts are
   still hindsight.
-- **No transaction costs, slippage, or execution model.** There is no backtest of
-  a regime-conditioned strategy here, and no P&L claim is made.
+- **The backtest is illustrative, not a strategy.** It charges a simple linear
+  transaction cost but ignores slippage, borrowing/short constraints, and taxes;
+  it trades a single instrument daily at the close; and the regime→exposure map
+  is hand-set. It shows the *signal* has value, not that this is a deployable
+  strategy.
 - **Non-stationarity.** The number of regimes is fixed by hand (`--regimes`), and
   market dynamics drift over decades; a fixed 3-state model is a simplification.
   Selecting the regime count via BIC/AIC would be a natural improvement.
 - **Single asset, single frequency.** Daily equity-index data only.
 
 Any of these would need to be addressed before the output could inform a real
-trade. A regime-conditioned strategy backtest — built strictly on the online
-walk-forward calls — is the natural next step.
+trade. Automatic regime-count selection (BIC/AIC) and a multi-asset extension are
+the natural next steps.
 
 ---
 
