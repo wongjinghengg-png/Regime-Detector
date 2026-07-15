@@ -1,8 +1,14 @@
 # Market Regime Detector
 
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Tests](https://img.shields.io/badge/tests-16%20passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-research%20prototype-orange)
+
 Detect hidden **market regimes** — calm, choppy, and crisis states — from daily
-price data, using three methods of increasing sophistication and comparing them
-head-to-head.
+price data, using four models across three approaches (a volatility-threshold
+baseline, clustering, and a Gaussian Hidden Markov Model), then testing whether
+the resulting signal actually holds up **out-of-sample**.
 
 > ⚠️ **Research prototype, not a trading system.** This project demonstrates the
 > modelling and engineering behind regime detection. It is deliberately *not*
@@ -15,6 +21,18 @@ head-to-head.
 *S&P 500 close price shaded by detected regime. Notice how the threshold baseline
 (top) flickers between regimes constantly, while the HMM (bottom) — which models
 regime **transitions** — produces stable, economically-meaningful blocks.*
+
+---
+
+## Contents
+
+- [What it does](#what-it-does) — the four models and the headline result
+- [Quickstart](#quickstart) — install and run in two commands
+- [Walk-forward](#walk-forward-does-it-work-out-of-sample) — out-of-sample evaluation
+- [Backtest](#does-the-signal-add-value-a-backtest) — does the signal add value?
+- [How it works](#how-it-works) — pipeline and project structure
+- [Limitations](#limitations) — **read this** — why it's not tradeable
+- [Testing](#testing) · [Tech stack](#tech-stack)
 
 ---
 
@@ -212,14 +230,26 @@ the natural next steps.
 ## Testing
 
 ```bash
-pytest -q
+pytest -q          # 16 tests, ~15s, no network required
 ```
 
 The suite runs fully offline against the synthetic data and checks the invariants
-that matter: features are causal and NaN-free, regime labels are volatility-
-ordered, every model produces valid labels for 2–4 regimes, the HMM is stickier
-than the baseline, and the highest-vol regime really is a drawdown state.
+that matter across the whole pipeline:
+
+- **Features** are causal and NaN-free; drawdown is never positive.
+- **Regime labels** are volatility-ordered, valid for 2–4 regimes, and the
+  highest-vol regime really is a drawdown state.
+- **The HMM** is stickier (fewer switches) than the naive baseline.
+- **Walk-forward** has no calls during warm-up and its online agreement with
+  hindsight sits strictly between chance and perfect — i.e. it's correlated but
+  genuinely out-of-sample.
+- **The backtest** uses a lagged signal (no lookahead), de-risking cuts max
+  drawdown, transaction costs drag returns, and zero exposure earns exactly zero.
 
 ## Tech stack
 
 Python · pandas · NumPy · scikit-learn · **hmmlearn** · matplotlib · yfinance · pytest
+
+## License
+
+Released under the [MIT License](LICENSE).
