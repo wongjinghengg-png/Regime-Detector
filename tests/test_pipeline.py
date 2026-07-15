@@ -12,6 +12,7 @@ from regime_detector import (  # noqa: E402
     data,
     evaluate,
     features,
+    selection,
     strategy,
     walkforward,
 )
@@ -163,3 +164,45 @@ def test_zero_exposure_regime_earns_nothing(walk_forward_result):
     feats, online = walk_forward_result
     bt = strategy.backtest(feats, online, weights={0: 0.0, 1: 0.0, 2: 0.0}, cost_bps=0.0)
     assert np.allclose(bt["strategy_return"], 0.0)
+
+
+@pytest.fixture(scope="module")
+def selection_table(prepared):
+    _, _, X = prepared
+    return selection.score_n_regimes(X, candidates=range(2, 6), n_iter=50)
+
+
+def test_selection_table_shape(selection_table):
+    assert list(selection_table.index) == [2, 3, 4, 5]
+    for col in ["log_likelihood", "n_params", "bic", "aic", "bic_improvement"]:
+        assert col in selection_table.columns
+    # More states => more free parameters, always.
+    assert selection_table["n_params"].is_monotonic_increasing
+
+
+def test_raw_bic_selection_returns_candidate(prepared):
+    _, _, X = prepared
+    best_n, table = selection.select_n_regimes(X, candidates=range(2, 6), criterion="bic")
+    assert best_n in table.index
+    assert best_n == int(table["bic"].idxmin())
+
+
+def test_elbow_is_more_parsimonious_than_raw_bic(prepared):
+    """The elbow exists to avoid the raw criterion's over-selection of states.
+
+    On financial-style data BIC keeps falling, so its raw minimum sits at the
+    largest candidate; the elbow should pick a smaller, interior count.
+    """
+    _, _, X = prepared
+    cands = range(2, 7)
+    elbow_n, table = selection.select_n_regimes(X, candidates=cands, criterion="elbow")
+    raw_bic_n = int(table["bic"].idxmin())
+    assert elbow_n in table.index
+    assert elbow_n <= raw_bic_n
+    assert elbow_n != max(cands)  # never just runs to the largest candidate
+
+
+def test_free_param_count_formula():
+    # 3-state, 3-feature full-covariance HMM:
+    # start 2 + trans 6 + means 9 + covars 3*6 = 35
+    assert selection._n_free_params(3, 3) == 35

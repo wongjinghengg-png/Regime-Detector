@@ -92,6 +92,35 @@ def plot_online_vs_hindsight(
     return fig
 
 
+def plot_selection(table, best_n: int, savepath: str | None = None):
+    """BIC/AIC vs. number of regimes, marking the elbow-selected count.
+
+    Two panels: the information criteria (top) and the marginal BIC improvement
+    per added regime (bottom), which is where the elbow is visible.
+    """
+    import matplotlib.pyplot as plt
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(8, 6), sharex=True, gridspec_kw={"height_ratios": [2, 1]}
+    )
+    ax1.plot(table.index, table["bic"], "o-", color="#2c7fb8", label="BIC")
+    ax1.plot(table.index, table["aic"], "s--", color="#fdae61", label="AIC")
+    ax1.axvline(best_n, color="#d7191c", lw=1.2, ls=":", label=f"elbow: {best_n} regimes")
+    ax1.set_ylabel("Criterion (lower = better)")
+    ax1.set_title("Regime-count selection")
+    ax1.legend()
+
+    ax2.bar(table.index, table["bic_improvement"].fillna(0), color="#2ca25f", alpha=0.7)
+    ax2.axvline(best_n, color="#d7191c", lw=1.2, ls=":")
+    ax2.set_ylabel("BIC gain\nper regime")
+    ax2.set_xlabel("Number of regimes")
+    ax2.set_xticks(list(table.index))
+    fig.tight_layout()
+    if savepath:
+        fig.savefig(savepath, dpi=120, bbox_inches="tight")
+    return ax1
+
+
 def plot_backtest(bt, title: str = "Regime strategy vs. buy & hold", savepath=None):
     """Equity curves (top) and strategy exposure over time (bottom).
 

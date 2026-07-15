@@ -1,8 +1,14 @@
 # Market Regime Detector
 
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Tests](https://img.shields.io/badge/tests-20%20passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-research%20prototype-orange)
+
 Detect hidden **market regimes** — calm, choppy, and crisis states — from daily
-price data, using three methods of increasing sophistication and comparing them
-head-to-head.
+price data, using four models across three approaches (a volatility-threshold
+baseline, clustering, and a Gaussian Hidden Markov Model), then testing whether
+the resulting signal actually holds up **out-of-sample**.
 
 > ⚠️ **Research prototype, not a trading system.** This project demonstrates the
 > modelling and engineering behind regime detection. It is deliberately *not*
@@ -15,6 +21,19 @@ head-to-head.
 *S&P 500 close price shaded by detected regime. Notice how the threshold baseline
 (top) flickers between regimes constantly, while the HMM (bottom) — which models
 regime **transitions** — produces stable, economically-meaningful blocks.*
+
+---
+
+## Contents
+
+- [What it does](#what-it-does) — the four models and the headline result
+- [Quickstart](#quickstart) — install and run in two commands
+- [Walk-forward](#walk-forward-does-it-work-out-of-sample) — out-of-sample evaluation
+- [Backtest](#does-the-signal-add-value-a-backtest) — does the signal add value?
+- [Choosing the number of regimes](#choosing-the-number-of-regimes) — BIC elbow selection
+- [How it works](#how-it-works) — pipeline and project structure
+- [Limitations](#limitations) — **read this** — why it's not tradeable
+- [Testing](#testing) · [Tech stack](#tech-stack)
 
 ---
 
@@ -77,12 +96,14 @@ CLI options: `--ticker`, `--start`, `--end`, `--regimes`, `--outdir`, `--no-plot
 > produced from the synthetic fallback; point it at a network-connected machine
 > to analyze real SPY.
 
-Add `--walk-forward` for the out-of-sample evaluation, or `--backtest` for that
-plus the regime-conditioned strategy below (~40s):
+Add `--walk-forward` for the out-of-sample evaluation, `--backtest` for that plus
+the regime-conditioned strategy, or `--auto-regimes` to pick the regime count from
+the data:
 
 ```bash
 python -m regime_detector --ticker SPY --walk-forward
-python -m regime_detector --ticker SPY --backtest
+python -m regime_detector --ticker SPY --backtest       # ~40s
+python -m regime_detector --ticker SPY --auto-regimes
 ```
 
 The narrated walkthrough lives in [`notebooks/analysis.ipynb`](notebooks/analysis.ipynb).
@@ -149,6 +170,30 @@ Implementation: [`strategy.py`](src/regime_detector/strategy.py). Reproduce with
 
 ---
 
+## Choosing the number of regimes
+
+Three regimes was a modelling choice, not a law. `--auto-regimes` selects the
+count from the data with information criteria — and surfaces a subtlety worth
+knowing.
+
+![Regime-count selection](reports/regime_selection.png)
+
+*Top: BIC/AIC keep falling as regimes are added — no clear minimum. Bottom: the
+marginal BIC gain per added regime, which peaks at 3.*
+
+Naive **BIC/AIC minimization over-selects HMM states on financial data**: the
+Gaussian-emission assumption is imperfect, so each extra state keeps improving
+the likelihood and the raw minimum just runs to the largest candidate (6 here).
+So the default rule is the **elbow** — the count past which adding a regime stops
+meaningfully improving the fit. It lands on **3 regimes**, matching the
+calm/choppy/crisis structure, while the raw BIC minimum would have picked 6.
+
+Choosing the elbow over the raw optimum is the point: an information criterion is
+a guide, not an oracle. Implementation: [`selection.py`](src/regime_detector/selection.py),
+run with `python -m regime_detector --auto-regimes`.
+
+---
+
 ## How it works
 
 1. **Features** (`features.py`) — from the close price: log returns, rolling
@@ -165,6 +210,8 @@ Implementation: [`strategy.py`](src/regime_detector/strategy.py). Reproduce with
    detection-lag metrics (see the section above).
 6. **Backtest** (`strategy.py`) — regime-conditioned exposure vs. buy-and-hold,
    built only on the online signal with a next-day execution lag and costs.
+7. **Selection** (`selection.py`) — data-driven regime count via the BIC elbow,
+   robust to the over-selection that plagues raw information-criterion minima.
 
 ```
 src/regime_detector/
@@ -177,6 +224,7 @@ src/regime_detector/
 │   └── base.py      # volatility-ordered relabeling
 ├── walkforward.py   # out-of-sample expanding-window HMM + lag metrics
 ├── strategy.py      # regime-conditioned backtest (lookahead-free)
+├── selection.py     # BIC/AIC + elbow regime-count selection
 ├── evaluate.py      # regime-conditional stats
 ├── plots.py         # shaded regime charts
 └── cli.py           # end-to-end pipeline
@@ -198,13 +246,14 @@ Read this section — it's the most important one.
   it trades a single instrument daily at the close; and the regime→exposure map
   is hand-set. It shows the *signal* has value, not that this is a deployable
   strategy.
-- **Non-stationarity.** The number of regimes is fixed by hand (`--regimes`), and
-  market dynamics drift over decades; a fixed 3-state model is a simplification.
-  Selecting the regime count via BIC/AIC would be a natural improvement.
+- **Non-stationarity.** `--auto-regimes` picks the regime count from the data,
+  but that count (and the fitted dynamics) are still assumed **fixed over the
+  whole history**. Markets drift over decades; a truly adaptive model would let
+  the regime structure itself evolve.
 - **Single asset, single frequency.** Daily equity-index data only.
 
 Any of these would need to be addressed before the output could inform a real
-trade. Automatic regime-count selection (BIC/AIC) and a multi-asset extension are
+trade. A multi-asset extension and a rolling (time-varying) regime structure are
 the natural next steps.
 
 ---
@@ -212,14 +261,28 @@ the natural next steps.
 ## Testing
 
 ```bash
-pytest -q
+pytest -q          # 20 tests, ~18s, no network required
 ```
 
 The suite runs fully offline against the synthetic data and checks the invariants
-that matter: features are causal and NaN-free, regime labels are volatility-
-ordered, every model produces valid labels for 2–4 regimes, the HMM is stickier
-than the baseline, and the highest-vol regime really is a drawdown state.
+that matter across the whole pipeline:
+
+- **Features** are causal and NaN-free; drawdown is never positive.
+- **Regime labels** are volatility-ordered, valid for 2–4 regimes, and the
+  highest-vol regime really is a drawdown state.
+- **The HMM** is stickier (fewer switches) than the naive baseline.
+- **Walk-forward** has no calls during warm-up and its online agreement with
+  hindsight sits strictly between chance and perfect — i.e. it's correlated but
+  genuinely out-of-sample.
+- **The backtest** uses a lagged signal (no lookahead), de-risking cuts max
+  drawdown, transaction costs drag returns, and zero exposure earns exactly zero.
+- **Regime-count selection** returns a valid candidate and the elbow is more
+  parsimonious than the raw BIC minimum (it never just runs to the largest count).
 
 ## Tech stack
 
 Python · pandas · NumPy · scikit-learn · **hmmlearn** · matplotlib · yfinance · pytest
+
+## License
+
+Released under the [MIT License](LICENSE).

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import data, evaluate, features, strategy, walkforward
+from . import data, evaluate, features, selection, strategy, walkforward
 from .models import baseline, clustering, hmm
 
 
@@ -25,10 +25,24 @@ def run(
     make_plots: bool = True,
     walk_forward: bool = False,
     backtest: bool = False,
+    auto_regimes: bool = False,
 ) -> dict:
     prices = data.load_prices(ticker, start, end)
     feats = features.build_features(prices)
     X = features.model_matrix(feats)
+
+    selection_table = None
+    if auto_regimes:
+        best_n, selection_table = selection.select_n_regimes(X, criterion="elbow")
+        raw_bic_min = int(selection_table["bic"].idxmin())
+        print("=== Regime-count selection ===")
+        print(selection_table.round(1).to_string())
+        print(
+            f"\nElbow selects {best_n} regimes (overriding --regimes). "
+            f"Raw BIC minimum is {raw_bic_min} — information criteria tend to "
+            f"over-select HMM states on financial data, so the elbow is used."
+        )
+        n_regimes = best_n
 
     labels = {
         "Threshold baseline": baseline.fit_predict(feats, n_regimes=n_regimes),
@@ -52,6 +66,10 @@ def run(
     summary.to_csv(Path(outdir) / "hmm_regime_summary.csv")
 
     result = {"prices": prices, "features": feats, "labels": labels}
+
+    if selection_table is not None:
+        selection_table.to_csv(Path(outdir) / "regime_selection.csv")
+        result["selection"] = selection_table
 
     if walk_forward or backtest:
         print("\n=== Walk-forward (out-of-sample) HMM ===")
@@ -83,6 +101,11 @@ def run(
             fig_path = Path(outdir) / "regime_comparison.png"
             plots.plot_model_comparison(prices, feats, labels, savepath=str(fig_path))
             print(f"\nSaved comparison figure -> {fig_path}")
+
+            if selection_table is not None:
+                sel_path = Path(outdir) / "regime_selection.png"
+                plots.plot_selection(selection_table, n_regimes, savepath=str(sel_path))
+                print(f"Saved selection figure -> {sel_path}")
 
             if walk_forward or backtest:
                 wf_path = Path(outdir) / "walk_forward.png"
@@ -119,6 +142,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="run the regime-conditioned strategy backtest (implies --walk-forward)",
     )
+    p.add_argument(
+        "--auto-regimes",
+        action="store_true",
+        help="select the number of regimes by BIC (overrides --regimes)",
+    )
     args = p.parse_args(argv)
     run(
         ticker=args.ticker,
@@ -129,6 +157,7 @@ def main(argv: list[str] | None = None) -> None:
         make_plots=not args.no_plots,
         walk_forward=args.walk_forward,
         backtest=args.backtest,
+        auto_regimes=args.auto_regimes,
     )
 
 
